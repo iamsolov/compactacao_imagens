@@ -1,224 +1,266 @@
-/*  Projeto – Compactação de Imagens BMP 24 bits
-    Arquivo padrão de entrada : imagem22x20.bmp
-    Arquivo gerado compactado : imagem22x20.zmp
-    Arquivo reconstruído      : imagem22x20_reconstruida.bmp
-
-    Compilação:
-        gcc -std=c99 -Wall -O2 bmp_codec.c -o bmp_codec
-
-    Execução (sem argumentos):
-        ./bmp_codec
+/*  
+    Projeto 2 – Compactação de Imagens BMP 24 bits
+    Universidade Presbiteriana Mackenzie – Algoritmos e Programação II
+    Nome: Leandro Solovjovas dos Santos
+    RA: 10438426
 */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 
-/* ---------- Nomes dos arquivos ---------- */
-#define BMP_ORIG   "imagem22x20.bmp"
-#define ZMP_FILE   "imagem22x20.zmp"
-#define BMP_RECON  "imagem22x20_reconstruida.bmp"
+//Nomes dos arquivos
+#define ARQUIVO_ORIGINAL        "imagemOriginal.bmp"
+#define ARQUIVO_COMPACTADO      "imagemCompactada.zmp"
+#define ARQUIVO_DESCOMPACTADO   "imagemDesompactada.bmp"
 
-/* ---------- Estruturas de cabeçalhos BMP ---------- */
+//Estruturas de cabeçalho BMP
 #pragma pack(push, 1)
-typedef struct {
-    uint16_t bfType;
-    uint32_t bfSize;
-    uint16_t bfReserved1;
-    uint16_t bfReserved2;
-    uint32_t bfOffBits;
-} BITMAPFILEHEADER;
+typedef struct 
+{
+    uint16_t tipo;
+    uint32_t tamanho;
+    uint16_t reservado1;
+    uint16_t reservado2;
+    uint32_t offset_dados;
+} CABECALHO_ARQUIVO;
 
-typedef struct {
-    uint32_t biSize;
-    int32_t  biWidth;
-    int32_t  biHeight;
-    uint16_t biPlanes;
-    uint16_t biBitCount;
-    uint32_t biCompression;
-    uint32_t biSizeImage;
-    int32_t  biXPelsPerMeter;
-    int32_t  biYPelsPerMeter;
-    uint32_t biClrUsed;
-    uint32_t biClrImportant;
-} BITMAPINFOHEADER;
+typedef struct 
+{
+    uint32_t tamanho;
+    int32_t  largura;
+    int32_t  altura;
+    uint16_t planos;
+    uint16_t bits_por_pixel;
+    uint32_t compressao;
+    uint32_t tamanho_imagem;
+    int32_t  resolucaoX;
+    int32_t  resolucaoY;
+    uint32_t cores_usadas;
+    uint32_t cores_importantes;
+} CABECALHO_INFO;
 #pragma pack(pop)
 
-typedef struct { uint8_t b, g, r; } Pixel;
+//Estrutura de pixel RGB
+typedef struct 
+{ 
+    uint8_t b; 
+    uint8_t g;
+    uint8_t r;
+} Pixel;
 
-/* ---------- Vetor dinâmico simples ---------- */
-typedef struct {
-    uint8_t *data;
-    size_t   size;
-    size_t   cap;
-} Vec;
-
-static void vec_push(Vec *v, uint8_t value) {
-    if (v->size == v->cap) {
-        v->cap = v->cap ? v->cap * 2 : 256;
-        v->data = realloc(v->data, v->cap);
-        if (!v->data) { perror("realloc"); exit(EXIT_FAILURE); }
-    }
-    v->data[v->size++] = value;
-}
-
-/* ---------- Utilitários ---------- */
-static long fsize(FILE *f) {
-    long p = ftell(f);
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, p, SEEK_SET);
-    return sz;
-}
-
-/* ---------- Leitura da matriz de pixels ---------- */
-static Pixel **read_pixels(FILE *f, int w, int h, int rowB) {
-    Pixel **img = malloc(sizeof(Pixel*) * h);
-    for (int i = 0; i < h; ++i) img[i] = malloc(sizeof(Pixel) * w);
-
-    uint8_t pad[3];
-    for (int r = h - 1; r >= 0; --r) {
-        fread(img[r], sizeof(Pixel), w, f);
-        fread(pad, 1, rowB - w * 3, f);
-    }
-    return img;
-}
-
-/* ---------- Escrita da matriz de pixels ---------- */
-static void write_pixels(FILE *f, Pixel **img, int w, int h, int rowB) {
-    uint8_t zero[3] = {0};
-    for (int r = h - 1; r >= 0; --r) {
-        fwrite(img[r], sizeof(Pixel), w, f);
-        fwrite(zero, 1, rowB - w * 3, f);
-    }
-}
-
-/* ---------- Compactação recursiva ---------- */
-static void compress_reg(Pixel **img,int r0,int c0,int h,int w,
-                         Vec *R,Vec *G,Vec *B)
+//Vetor dinâmico para armazenar bytes
+typedef struct 
 {
-    if (h <= 3 || w <= 3) {
-        Pixel p = img[r0 + h/2][c0 + w/2];
-        vec_push(R,p.r); vec_push(G,p.g); vec_push(B,p.b);
+    uint8_t *dados;
+    size_t   tamanho;
+    size_t   capacidade;
+} Vetor;
+
+void adicionar_byte(Vetor *vetor, uint8_t valor) 
+{
+    if (vetor->tamanho == vetor->capacidade) 
+    {
+        vetor->capacidade = vetor->capacidade ? vetor->capacidade * 2 : 256;
+        vetor->dados = realloc(vetor->dados, vetor->capacidade);
+        if (!vetor->dados) 
+        {
+            printf("Erro de memória\n");
+            exit(1);
+        }
+    }
+    vetor->dados[vetor->tamanho++] = valor;
+}
+
+long tamanho_arquivo(FILE *arquivo) 
+{
+    long atual = ftell(arquivo);
+    fseek(arquivo, 0, SEEK_END);
+    long tamanho = ftell(arquivo);
+    fseek(arquivo, atual, SEEK_SET);
+    return tamanho;
+}
+
+Pixel **carregar_pixels(FILE *arquivo, int largura, int altura, int bytes_por_linha) 
+{
+    Pixel **imagem = malloc(sizeof(Pixel*) * altura);
+    for (int i = 0; i < altura; i++)
+    {
+        imagem[i] = malloc(sizeof(Pixel) * largura);
+    }
+
+    uint8_t lixo[3];
+    for (int linha = altura - 1; linha >= 0; linha--) 
+    {
+        fread(imagem[linha], sizeof(Pixel), largura, arquivo);
+        fread(lixo, 1, bytes_por_linha - largura * 3, arquivo);
+    }
+
+    return imagem;
+}
+
+void salvar_pixels(FILE *arquivo, Pixel **imagem, int largura, int altura, int bytes_por_linha) 
+{
+    uint8_t zeros[3] = {0};
+    for (int linha = altura - 1; linha >= 0; linha--) 
+    {
+        fwrite(imagem[linha], sizeof(Pixel), largura, arquivo);
+        fwrite(zeros, 1, bytes_por_linha - largura * 3, arquivo);
+    }
+}
+
+void compactar_area(Pixel **imagem, int lin, int col, int alt, int larg, Vetor *R, Vetor *G, Vetor *B) 
+{
+    if (alt <= 3 || larg <= 3) 
+    {
+        Pixel p = imagem[lin + alt / 2][col + larg / 2];
+        adicionar_byte(R, p.r);
+        adicionar_byte(G, p.g);
+        adicionar_byte(B, p.b);
         return;
     }
-    int h2=h/2, w2=w/2;
-    compress_reg(img,r0      ,c0      ,h2,     w2     ,R,G,B);
-    compress_reg(img,r0      ,c0+w2   ,h2,     w-w2   ,R,G,B);
-    compress_reg(img,r0+h2   ,c0      ,h-h2   ,w2     ,R,G,B);
-    compress_reg(img,r0+h2   ,c0+w2   ,h-h2   ,w-w2   ,R,G,B);
+
+    int meio_alt = alt / 2;
+    int meio_larg = larg / 2;
+
+    compactar_area(imagem, lin, col, meio_alt, meio_larg, R, G, B);
+    compactar_area(imagem, lin, col + meio_larg, meio_alt, larg - meio_larg, R, G, B);
+    compactar_area(imagem, lin + meio_alt, col, alt - meio_alt, meio_larg, R, G, B);
+    compactar_area(imagem, lin + meio_alt, col + meio_larg, alt - meio_alt, larg - meio_larg, R, G, B);
 }
 
-/* ---------- Descompactação recursiva ---------- */
-typedef struct { FILE *f; } ZmpReader;
-
-static void decompress_reg(Pixel **img,int r0,int c0,int h,int w,ZmpReader*z)
+void descompactar_area(Pixel **imagem, int lin, int col, int alt, int larg, FILE *arquivo) 
 {
-    if (h <= 3 || w <= 3) {
-        uint8_t r=fgetc(z->f), g=fgetc(z->f), b=fgetc(z->f);
-        for(int i=0;i<h;++i) for(int j=0;j<w;++j){
-            img[r0+i][c0+j].r=r; img[r0+i][c0+j].g=g; img[r0+i][c0+j].b=b;
+    if (alt <= 3 || larg <= 3) 
+    {
+        uint8_t r = fgetc(arquivo);
+        uint8_t g = fgetc(arquivo);
+        uint8_t b = fgetc(arquivo);
+
+        for (int i = 0; i < alt; i++) 
+        {
+            for (int j = 0; j < larg; j++) 
+            {
+                imagem[lin + i][col + j].r = r;
+                imagem[lin + i][col + j].g = g;
+                imagem[lin + i][col + j].b = b;
+            }
         }
         return;
     }
-    int h2=h/2, w2=w/2;
-    decompress_reg(img,r0      ,c0      ,h2,     w2     ,z);
-    decompress_reg(img,r0      ,c0+w2   ,h2,     w-w2   ,z);
-    decompress_reg(img,r0+h2   ,c0      ,h-h2   ,w2     ,z);
-    decompress_reg(img,r0+h2   ,c0+w2   ,h-h2   ,w-w2   ,z);
+
+    int meio_alt = alt / 2;
+    int meio_larg = larg / 2;
+
+    descompactar_area(imagem, lin, col, meio_alt, meio_larg, arquivo);
+    descompactar_area(imagem, lin, col + meio_larg, meio_alt, larg - meio_larg, arquivo);
+    descompactar_area(imagem, lin + meio_alt, col, alt - meio_alt, meio_larg, arquivo);
+    descompactar_area(imagem, lin + meio_alt, col + meio_larg, alt - meio_alt, larg - meio_larg, arquivo);
 }
 
-/* ---------- Etapa de compactação ---------- */
-static void compactar(void)
+void compactar_imagem() 
 {
-    FILE *in=fopen(BMP_ORIG,"rb");
-    if(!in){perror("BMP_ORIG");exit(EXIT_FAILURE);}
-    BITMAPFILEHEADER bfh; BITMAPINFOHEADER bih;
-    fread(&bfh,sizeof(bfh),1,in);
-    fread(&bih,sizeof(bih),1,in);
-    if(bfh.bfType!=0x4D42||bih.biBitCount!=24){
-        fprintf(stderr,"Apenas BMP 24 bits aceitos.\n"); exit(EXIT_FAILURE);
+    FILE *entrada = fopen(ARQUIVO_ORIGINAL, "rb");
+    if (!entrada) 
+    {
+        printf("Erro ao abrir imagem.\n");
+        exit(1);
     }
 
-    size_t hdrSize=bfh.bfOffBits;
-    uint8_t *hdr=malloc(hdrSize);
-    fseek(in,0,SEEK_SET); fread(hdr,1,hdrSize,in);
+    CABECALHO_ARQUIVO cab_arquivo;
+    CABECALHO_INFO cab_info;
 
-    int W=bih.biWidth, H=bih.biHeight;
-    int rowB=((W*3+3)/4)*4;
-    Pixel **img=read_pixels(in,W,H,rowB);
-    fclose(in);
+    fread(&cab_arquivo, sizeof(cab_arquivo), 1, entrada);
+    fread(&cab_info, sizeof(cab_info), 1, entrada);
 
-    Vec vr={0},vg={0},vb={0};
-    compress_reg(img,0,0,H,W,&vr,&vg,&vb);
-
-    FILE *out=fopen(ZMP_FILE,"wb");
-    if(!out){perror("ZMP_FILE");exit(EXIT_FAILURE);}
-    fwrite(hdr,1,hdrSize,out);
-    for(size_t i=0;i<vr.size;++i){
-        fputc(vr.data[i],out);
-        fputc(vg.data[i],out);
-        fputc(vb.data[i],out);
+    if (cab_arquivo.tipo != 0x4D42 || cab_info.bits_por_pixel != 24) 
+    {
+        printf("Apenas imagens BMP 24 bits são aceitas.\n");
+        exit(1);
     }
-    fclose(out);
 
-    long orig = hdrSize + (long)rowB * H;
-    long comp = fsize(out=fopen(ZMP_FILE,"rb")); fclose(out);
-    printf("=== Compactação ===\n");
-    printf("Original    : %ld bytes\n", orig);
-    printf("Compactado  : %ld bytes\n", comp);
-    printf("Taxa        : %.2f %%\n\n", 100.0*(orig-comp)/orig);
+    size_t tam_cabecalho = cab_arquivo.offset_dados;
+    uint8_t *dados_cabecalho = malloc(tam_cabecalho);
+    fseek(entrada, 0, SEEK_SET);
+    fread(dados_cabecalho, 1, tam_cabecalho, entrada);
 
-    free(hdr);
+    int largura = cab_info.largura;
+    int altura = cab_info.altura;
+    int bytes_linha = ((largura * 3 + 3) / 4) * 4;
+
+    Pixel **imagem = carregar_pixels(entrada, largura, altura, bytes_linha);
+    fclose(entrada);
+
+    Vetor vr = {0}, vg = {0}, vb = {0};
+    compactar_area(imagem, 0, 0, altura, largura, &vr, &vg, &vb);
+
+    FILE *saida = fopen(ARQUIVO_COMPACTADO, "wb");
+    fwrite(dados_cabecalho, 1, tam_cabecalho, saida);
+    for (size_t i = 0; i < vr.tamanho; i++) 
+    {
+        fputc(vr.dados[i], saida);
+        fputc(vg.dados[i], saida);
+        fputc(vb.dados[i], saida);
+    }
+    fclose(saida);
+
+    long tam_original = tam_cabecalho + (long)bytes_linha * altura;
+    FILE *arq_comp = fopen(ARQUIVO_COMPACTADO, "rb");
+    long tam_comp = tamanho_arquivo(arq_comp);
+    fclose(arq_comp);
+
+    printf("Imagem original:     %ld bytes\n", tam_original);
+    printf("Imagem compactada:   %ld bytes\n", tam_comp);
 }
 
-/* ---------- Etapa de descompactação ---------- */
-static void descompactar(void)
+void descompactar_imagem() 
 {
-    FILE *in=fopen(ZMP_FILE,"rb");
-    if(!in){perror("ZMP_FILE");exit(EXIT_FAILURE);}
-    BITMAPFILEHEADER bfh; BITMAPINFOHEADER bih;
-    fread(&bfh,sizeof(bfh),1,in);
-    fread(&bih,sizeof(bih),1,in);
+    FILE *entrada = fopen(ARQUIVO_COMPACTADO, "rb");
+    if (!entrada) 
+    {
+        printf("Erro ao abrir arquivo compactado.\n");
+        exit(1);
+    }
 
-    size_t hdrSize=bfh.bfOffBits;
-    uint8_t *hdr=malloc(hdrSize);
-    fseek(in,0,SEEK_SET); fread(hdr,1,hdrSize,in);
+    CABECALHO_ARQUIVO cab_arquivo;
+    CABECALHO_INFO cab_info;
 
-    int W=bih.biWidth, H=bih.biHeight;
-    int rowB=((W*3+3)/4)*4;
+    fread(&cab_arquivo, sizeof(cab_arquivo), 1, entrada);
+    fread(&cab_info, sizeof(cab_info), 1, entrada);
 
-    fseek(in,hdrSize,SEEK_SET);
-    ZmpReader zr={.f=in};
+    size_t tam_cabecalho = cab_arquivo.offset_dados;
+    uint8_t *dados_cabecalho = malloc(tam_cabecalho);
+    fseek(entrada, 0, SEEK_SET);
+    fread(dados_cabecalho, 1, tam_cabecalho, entrada);
 
-    Pixel **img=malloc(sizeof(Pixel*)*H);
-    for(int i=0;i<H;++i) img[i]=calloc(W,sizeof(Pixel));
+    int largura = cab_info.largura;
+    int altura = cab_info.altura;
+    int bytes_linha = ((largura * 3 + 3) / 4) * 4;
 
-    decompress_reg(img,0,0,H,W,&zr);
-    fclose(in);
+    fseek(entrada, tam_cabecalho, SEEK_SET);
 
-    FILE *out=fopen(BMP_RECON,"wb");
-    if(!out){perror("BMP_RECON");exit(EXIT_FAILURE);}
-    fwrite(hdr,1,hdrSize,out);
-    write_pixels(out,img,W,H,rowB);
-    fclose(out);
+    Pixel **imagem = malloc(sizeof(Pixel*) * altura);
+    for (int i = 0; i < altura; i++) 
+    {
+        imagem[i] = calloc(largura, sizeof(Pixel));
+    }
 
-    long comp=fsize(in=fopen(ZMP_FILE,"rb")); fclose(in);
-    long rec =fsize(out=fopen(BMP_RECON,"rb")); fclose(out);
-    printf("=== Descompactação ===\n");
-    printf("Compactado  : %ld bytes\n", comp);
-    printf("Reconstruído: %ld bytes\n\n", rec);
+    descompactar_area(imagem, 0, 0, altura, largura, entrada);
+    fclose(entrada);
 
-    free(hdr);
+    FILE *saida = fopen(ARQUIVO_DESCOMPACTADO, "wb");
+    fwrite(dados_cabecalho, 1, tam_cabecalho, saida);
+    salvar_pixels(saida, imagem, largura, altura, bytes_linha);
+    fclose(saida);
+
+    printf("Imagem descompactada salva como %s.\n", ARQUIVO_DESCOMPACTADO);
 }
 
-/* ---------- Função principal ---------- */
-int main(void)
+int main()
 {
-    printf("Processando %s...\n\n", BMP_ORIG);
-    compactar();
-    descompactar();
-    puts("Processo concluído. Verifique os arquivos gerados.");
+    printf("Iniciando processamento da imagem %s.\n\n", ARQUIVO_ORIGINAL);
+    compactar_imagem();
+    descompactar_imagem();
+    printf("\nProcesso finalizado com sucesso.\n");
     return 0;
 }

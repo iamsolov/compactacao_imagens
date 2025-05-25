@@ -12,7 +12,7 @@
 //Nomes dos arquivos
 #define ARQUIVO_ORIGINAL        "imagemOriginal.bmp"
 #define ARQUIVO_COMPACTADO      "imagemCompactada.zmp"
-#define ARQUIVO_DESCOMPACTADO   "imagemDesompactada.bmp"
+#define ARQUIVO_DESCOMPACTADO   "imagemDescompactada.bmp"
 
 //Estruturas de cabeçalho BMP
 #pragma pack(push, 1)
@@ -253,7 +253,7 @@ void descompactar_imagem()
     salvar_pixels(saida, imagem, largura, altura, bytes_linha);
     fclose(saida);
 
-    printf("Imagem descompactada salva como %s.\n", ARQUIVO_DESCOMPACTADO);
+    printf("\nImagem descompactada salva como %s.\n", ARQUIVO_DESCOMPACTADO);
 }
 
 int main()
